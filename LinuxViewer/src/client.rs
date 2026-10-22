@@ -37,7 +37,8 @@ pub const DEFAULT_LOCAL_SCREEN: (u32, u32) = (1920, 1080);
 pub struct ConnectOptions {
     /// This computer's screen size for the Login message (winit monitor size).
     pub local_screen: Option<(u32, u32)>,
-    /// Accept incoming file offers automatically into this folder.
+    /// Where offered files are saved once accepted (`SessionHandle::accept_offer`);
+    /// nothing is written before that.
     pub download_dir: Option<std::path::PathBuf>,
     /// Keep the local clipboard in sync with the partner (console::wrap).
     pub clipboard: bool,
@@ -47,6 +48,9 @@ pub struct ConnectOptions {
     pub chat_on_stdout: bool,
     /// Do not offer the encrypted LAN-direct channel (relay only).
     pub no_lan_direct: bool,
+    /// With `console`, stdout carries only crate::ipc lines and stdin takes
+    /// the host-style commands; the session ends when stdin closes.
+    pub ipc: bool,
 }
 
 pub enum ClientEvent {
@@ -105,6 +109,9 @@ struct Shared {
     closed: AtomicBool,
     clipboard: AtomicBool,
     files: Mutex<Engine>,
+    download_dir: Option<std::path::PathBuf>,
+    /// Names of incoming offers that have not finished, by transfer ID.
+    offers: Mutex<HashMap<String, String>>,
     /// The selected LAN-direct channel; when set, all peer traffic uses it.
     direct: Mutex<Option<DirectWriter>>,
     relay_ready: AtomicBool,
@@ -136,6 +143,23 @@ impl Shared {
         link.writer.send(&forward_envelope(link.ip, link.port, format_flag, payload))
     }
 
+    /// Applies a file message from the host. An offer only records its name:
+    /// the file is created when the user accepts it.
+    fn receive_file(&self, message: files::Message) -> Result<Vec<files::Event>> {
+        let mut engine = self.files.lock().unwrap();
+        let update = engine.consume(message);
+        self.send_file_messages(&update.messages)?;
+        let mut offers = self.offers.lock().unwrap();
+        for e in &update.events {
+            match e {
+                files::Event::Offer(o) => { offers.insert(o.transfer_id.clone(), o.file_name.clone()); }
+                files::Event::Completed(id) | files::Event::Canceled(id) | files::Event::Failed(id, _) => { offers.remove(id); }
+                files::Event::Progress(..) => {}
+            }
+        }
+        Ok(update.events)
+    }
+
     /// Sends an engine update's messages in order (callers hold the files lock).
     fn send_file_messages(&self, messages: &[files::Message]) -> Result<()> {
         for m in messages {
@@ -159,6 +183,41 @@ impl Shared {
     }
 }
 
+/// Where `connect` gets the partner's password. `--password-stdin` reads the
+/// first stdin line, so the password never appears in the process arguments.
+#[derive(Debug, PartialEq)]
+pub enum PasswordSource {
+    Argument(String),
+    Stdin,
+    Prompt,
+}
+
+impl PasswordSource {
+    pub fn parse(args: &[String]) -> Result<Self> {
+        let stdin = args.iter().any(|a| a == "--password-stdin");
+        match (args.iter().position(|a| a == "--password"), stdin) {
+            (Some(_), true) => Err("Use either --password or --password-stdin, not both.".into()),
+            (Some(i), false) => Ok(Self::Argument(args.get(i + 1).cloned().ok_or("--password needs a value")?)),
+            (None, true) => Ok(Self::Stdin),
+            (None, false) => Ok(Self::Prompt),
+        }
+    }
+
+    pub fn read(self, partner_id: &str) -> Result<String> {
+        match self {
+            Self::Argument(p) => Ok(p),
+            Self::Stdin => {
+                let mut line = String::new();
+                if std::io::stdin().read_line(&mut line)? == 0 {
+                    return Err("stdin closed before the password line.".into());
+                }
+                Ok(line.trim_end_matches(['\r', '\n']).to_string())
+            }
+            Self::Prompt => Ok(rpassword::prompt_password(format!("Password for {partner_id}: "))?),
+        }
+    }
+}
+
 /// Register, look up `partner_id`, log in, and run the receive loop on a
 /// background thread. `notify` is called from that thread. Returns at once;
 /// network failures arrive as `ClientEvent::Closed`.
@@ -176,9 +235,11 @@ pub fn connect_with(profile: &Profile, partner_id: &str, password: &str, options
     if !password.is_ascii() {
         return Err("UltraViewer passwords must be ASCII.".into());
     }
-    let session = ClientSession { handle: SessionHandle { screen: Arc::new(Mutex::new(None)), shared: Arc::new(Shared::default()) } };
+    let shared = Shared { download_dir: options.download_dir.clone(), ..Default::default() };
+    let session = ClientSession { handle: SessionHandle { screen: Arc::new(Mutex::new(None)), shared: Arc::new(shared) } };
     let notify = if options.console || options.clipboard {
-        crate::console::wrap(session.handle(), options.console, options.clipboard, options.chat_on_stdout, notify)
+        let ipc = options.ipc.then_some(partner_id);
+        crate::console::wrap(session.handle(), options.console, options.clipboard, options.chat_on_stdout, ipc, notify)
     } else {
         notify
     };
@@ -210,7 +271,9 @@ pub fn connect_with(profile: &Profile, partner_id: &str, password: &str, options
         };
         let user_closed = run.shared.closed.load(Ordering::SeqCst);
         run.shared.closed.store(true, Ordering::SeqCst);
+        // Offers never answered leave nothing behind; partial files are removed.
         run.shared.files.lock().unwrap().reset();
+        run.shared.offers.lock().unwrap().clear();
         run.shared.shutdown();
         (run.notify)(ClientEvent::Closed(if user_closed { "Disconnected.".into() } else { reason }));
     })?;
@@ -286,9 +349,21 @@ impl SessionHandle {
         self.shared.send_file_messages(&update.messages)
     }
 
+    /// Accepts an offer into `ConnectOptions::download_dir` under a new name.
+    pub fn accept_offer(&self, transfer_id: &str) -> Result<std::path::PathBuf> {
+        let dir = self.shared.download_dir.clone().ok_or("No download folder was chosen.")?;
+        let name = self.shared.offers.lock().unwrap().get(transfer_id).cloned().ok_or("No such file offer.")?;
+        let destination = files::unique_destination(&dir, &name);
+        self.accept_file(transfer_id, &destination)?;
+        self.shared.offers.lock().unwrap().remove(transfer_id);
+        Ok(destination)
+    }
+
+    /// Refuses an offer or stops a transfer; a partly received file is removed.
     pub fn cancel_file(&self, transfer_id: &str) -> Result<()> {
         let mut engine = self.shared.files.lock().unwrap();
         let update = engine.cancel(transfer_id);
+        self.shared.offers.lock().unwrap().remove(transfer_id);
         self.shared.send_file_messages(&update.messages)
     }
 
@@ -837,25 +912,7 @@ impl Run {
 
     fn file_message(&mut self, parts: &[&[u8]]) -> Result<()> {
         let Some(message) = files::Message::decode_host_parts(parts) else { return Ok(()) };
-        let mut events = Vec::new();
-        {
-            let mut engine = self.shared.files.lock().unwrap();
-            let update = engine.consume(message);
-            self.shared.send_file_messages(&update.messages)?;
-            for e in update.events {
-                if let (files::Event::Offer(o), Some(dir)) = (&e, &self.options.download_dir) {
-                    let dest = files::unique_destination(dir, &o.file_name);
-                    let accepted = engine.accept(&o.transfer_id, &dest)
-                        .unwrap_or_else(|err| engine.fail(&o.transfer_id, &format!("Could not save {}: {err}", dest.display())));
-                    self.shared.send_file_messages(&accepted.messages)?;
-                    events.push(e);
-                    events.extend(accepted.events);
-                } else {
-                    events.push(e);
-                }
-            }
-        }
-        for e in events {
+        for e in self.shared.receive_file(message)? {
             (self.notify)(ClientEvent::File(e));
         }
         Ok(())
@@ -938,5 +995,92 @@ impl Run {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    fn download_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("lv-connect-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn session(dir: &std::path::Path) -> SessionHandle {
+        let shared = Shared { download_dir: Some(dir.into()), ..Default::default() };
+        shared.active.store(true, Ordering::SeqCst);
+        SessionHandle { screen: Arc::default(), shared: Arc::new(shared) }
+    }
+
+    fn offer(id: &str, name: &str) -> files::Message {
+        files::Message::Offer(files::Offer { transfer_id: id.into(), file_name: name.into(), size: 5 })
+    }
+
+    fn entries(dir: &std::path::Path) -> usize {
+        std::fs::read_dir(dir).unwrap().count()
+    }
+
+    #[test]
+    fn password_stdin_conflicts_with_password() {
+        assert!(PasswordSource::parse(&args("123 --password 1234 --password-stdin")).is_err());
+        assert!(PasswordSource::parse(&args("123 --password-stdin --password 1234")).is_err());
+        assert_eq!(PasswordSource::parse(&args("123 --password-stdin --ipc")).unwrap(), PasswordSource::Stdin);
+        assert_eq!(PasswordSource::parse(&args("123 --password 1234")).unwrap(), PasswordSource::Argument("1234".into()));
+        assert_eq!(PasswordSource::parse(&args("123")).unwrap(), PasswordSource::Prompt);
+        assert!(PasswordSource::parse(&args("123 --password")).is_err());
+    }
+
+    #[test]
+    fn offered_file_is_not_written_before_accept() {
+        let dir = download_dir("offer");
+        let s = session(&dir);
+        let id = "31234567890123456789";
+        let events = s.shared.receive_file(offer(id, "note.txt")).unwrap();
+        assert_eq!(events, [files::Event::Offer(files::Offer { transfer_id: id.into(), file_name: "note.txt".into(), size: 5 })]);
+        assert_eq!(entries(&dir), 0);
+        assert!(s.shared.files.lock().unwrap().is_pending(id));
+    }
+
+    #[test]
+    fn refused_file_is_dropped_and_leaves_nothing() {
+        let dir = download_dir("refuse");
+        let s = session(&dir);
+        let id = "31234567890123456780";
+        s.shared.receive_file(offer(id, "note.txt")).unwrap();
+        // No relay in the test: the cancel message cannot be sent, the offer is still dropped.
+        let _ = s.cancel_file(id);
+        assert!(!s.shared.files.lock().unwrap().is_pending(id));
+        assert!(s.accept_offer(id).is_err());
+        assert_eq!(entries(&dir), 0);
+    }
+
+    #[test]
+    fn unanswered_file_is_dropped_when_the_session_ends() {
+        let dir = download_dir("ended");
+        let s = session(&dir);
+        let id = "31234567890123456781";
+        s.shared.receive_file(offer(id, "note.txt")).unwrap();
+        s.shared.files.lock().unwrap().reset();
+        assert_eq!(s.shared.files.lock().unwrap().count(), 0);
+        assert_eq!(entries(&dir), 0);
+    }
+
+    #[test]
+    fn file_names_with_control_characters_are_refused() {
+        let dir = download_dir("control");
+        let s = session(&dir);
+        for (i, name) in ["a\nb.txt", "a\rb", "\u{1b}[2J", "x\u{7f}"].iter().enumerate() {
+            let id = format!("3123456789012345678{i}");
+            assert!(s.shared.receive_file(offer(&id, name)).unwrap().is_empty(), "{name:?}");
+            assert!(!s.shared.files.lock().unwrap().is_pending(&id), "{name:?}");
+        }
+        assert_eq!(entries(&dir), 0);
     }
 }

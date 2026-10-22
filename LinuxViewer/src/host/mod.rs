@@ -29,8 +29,8 @@ pub enum BackendChoice {
 /// `linuxviewer host` flags.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Options {
-    /// Approve every verified login without asking: Some(true) = control, Some(false) = view only.
-    pub auto_approve: Option<bool>,
+    /// Machine-readable stdout (crate::ipc); the session ends when stdin closes.
+    pub ipc: bool,
     pub selection: Selection,
     /// Share the clipboard with the viewer.
     pub clipboard: bool,
@@ -39,7 +39,7 @@ pub struct Options {
     pub download_dir: Option<PathBuf>,
 }
 
-pub const USAGE: &str = "linuxviewer host [--auto-approve control|view] [--monitor N|all] [--clipboard] \
+pub const USAGE: &str = "linuxviewer host [--ipc] [--monitor N|all] [--clipboard] \
                          [--backend auto|x11|wayland] [--download-dir PATH]";
 
 impl Options {
@@ -50,11 +50,7 @@ impl Options {
         while let Some(arg) = it.next() {
             let mut value = |name: &str| it.next().cloned().ok_or_else(|| format!("{name} needs a value\nusage: {USAGE}"));
             match arg.as_str() {
-                "--auto-approve" => o.auto_approve = Some(match value(arg)?.as_str() {
-                    "control" => true,
-                    "view" => false,
-                    v => return Err(format!("--auto-approve takes control or view, not {v:?}").into()),
-                }),
+                "--ipc" => o.ipc = true,
                 "--monitor" => o.selection = Selection::parse(&value(arg)?)?,
                 "--clipboard" => o.clipboard = true,
                 "--backend" => o.backend = match value(arg)?.as_str() {
@@ -134,13 +130,20 @@ mod tests {
 
     #[test]
     fn parses_host_options() {
-        let o = Options::parse(&args("--auto-approve view --monitor 2 --clipboard --backend wayland --download-dir /tmp/x")).unwrap();
-        assert_eq!(o, Options { auto_approve: Some(false), selection: Selection::Display(2), clipboard: true,
+        let o = Options::parse(&args("--ipc --monitor 2 --clipboard --backend wayland --download-dir /tmp/x")).unwrap();
+        assert_eq!(o, Options { ipc: true, selection: Selection::Display(2), clipboard: true,
                                 backend: BackendChoice::Wayland, download_dir: Some("/tmp/x".into()) });
         assert_eq!(Options::parse(&[]).unwrap(), Options::default());
-        assert_eq!(Options::parse(&args("--auto-approve control")).unwrap().auto_approve, Some(true));
-        for bad in ["--auto-approve", "--auto-approve yes", "--monitor 0", "--backend mir", "--bogus"] {
+        for bad in ["--monitor 0", "--backend mir", "--bogus"] {
             assert!(Options::parse(&args(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn approval_cannot_be_skipped_from_the_command_line() {
+        for bad in ["--auto-approve control", "--auto-approve view", "--auto-approve"] {
+            let e = Options::parse(&args(bad)).unwrap_err().to_string();
+            assert!(e.starts_with("unknown host option \"--auto-approve\""), "{bad}: {e}");
         }
     }
 }

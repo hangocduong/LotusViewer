@@ -124,9 +124,7 @@ pub fn locate(streams: &[StreamInfo], x: i32, y: i32) -> Option<(u32, f64, f64)>
 }
 
 fn token_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("linuxviewer").join("wayland-restore-token"))
+    crate::profile::config_dir().ok().map(|d| d.join("wayland-restore-token"))
 }
 
 enum PortalCmd {

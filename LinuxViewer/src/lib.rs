@@ -12,6 +12,7 @@ pub mod direct;
 pub mod files;
 pub mod host;
 pub mod input;
+pub mod ipc;
 pub mod launcher;
 pub mod messages;
 pub mod profile;

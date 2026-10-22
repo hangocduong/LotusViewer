@@ -179,20 +179,24 @@ fn handshake_error(e: std::io::Error, host: &str, addr: SocketAddr) -> crate::wi
 
 fn client_config(cert_host: &str) -> Result<ClientConfig> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let mut roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-    roots.add(CertificateDer::from(sectigo_r46_der()))?;
-    let inner = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone()).build()?;
-    let verifier = RelayVerifier {
-        inner,
-        extra_intermediate: CertificateDer::from(b64(SECTIGO_DV_R36_B64)),
-        cert_name: ServerName::try_from(cert_host.to_string())?,
-        insecure: std::env::var("LINUXVIEWER_INSECURE_RELAY").is_ok_and(|v| v == "1"),
-    };
+    let verifier = relay_verifier(cert_host, provider.clone())?;
     Ok(ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth())
+}
+
+/// The only relay verifier: webpki-roots plus Sectigo R46. No environment
+/// variable or option turns certificate checks off.
+fn relay_verifier(cert_host: &str, provider: Arc<rustls::crypto::CryptoProvider>) -> Result<RelayVerifier> {
+    let mut roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+    roots.add(CertificateDer::from(sectigo_r46_der()))?;
+    Ok(RelayVerifier {
+        inner: WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider).build()?,
+        extra_intermediate: CertificateDer::from(b64(SECTIGO_DV_R36_B64)),
+        cert_name: ServerName::try_from(cert_host.to_string())?,
+    })
 }
 
 pub fn sectigo_r46_der() -> Vec<u8> {
@@ -211,7 +215,6 @@ struct RelayVerifier {
     inner: Arc<WebPkiServerVerifier>,
     extra_intermediate: CertificateDer<'static>,
     cert_name: ServerName<'static>,
-    insecure: bool,
 }
 
 impl ServerCertVerifier for RelayVerifier {
@@ -237,9 +240,6 @@ impl ServerCertVerifier for RelayVerifier {
                     break;
                 }
             }
-        }
-        if self.insecure {
-            return Ok(ServerCertVerified::assertion());
         }
         Err(first.unwrap_or(rustls::Error::InvalidCertificate(CertificateError::BadEncoding)))
     }
@@ -453,6 +453,20 @@ impl FrameWriter {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn relay_certificates_are_checked_even_with_the_old_insecure_variable() {
+        std::env::set_var("LINUXVIEWER_INSECURE_RELAY", "1");
+        let host = "functions3.ultraviewer.net";
+        let verifier = relay_verifier(host, Arc::new(rustls::crypto::ring::default_provider())).unwrap();
+        let sni = ServerName::try_from(host).unwrap();
+        // A real certificate that is not the relay's, and bytes that are no certificate at all.
+        for forged in [sectigo_r46_der(), vec![0x30, 0x00]] {
+            let r = verifier.verify_server_cert(&CertificateDer::from(forged), &[], &sni, &[], UnixTime::now());
+            assert!(r.is_err());
+        }
+        assert!(client_config(host).is_ok());
+    }
 
     // Tests/UltraViewerProtocolTests/FrameTests.swift
     #[test]

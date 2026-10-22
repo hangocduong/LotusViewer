@@ -9,6 +9,7 @@ use super::session::{Action, Core, Route};
 use super::tools::Tools;
 use super::Options;
 use crate::command::CommandConnection;
+use crate::ipc::{self, Line};
 use crate::messages::Registration;
 use crate::tls::{self, FrameWriter};
 use crate::wire::{self, Envelope, Result};
@@ -75,6 +76,9 @@ const HELP: &str = "Commands: c = toggle control, m N / m all = share display N 
 /// Register, print the ID and password, and serve viewers until Ctrl-C.
 pub fn run(registration: &Registration, master_proof: Option<String>, backend: Backend, opts: &Options) -> Result<()> {
     let (tx, rx) = mpsc::channel::<Event>();
+    if opts.ipc {
+        ipc::emit(&Line::Hello);
+    }
     eprintln!("Getting this computer's UltraViewer ID…");
     let mut connection = CommandConnection::register(registration)?;
     let reply = connection.registration().clone();
@@ -115,7 +119,11 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
     let send_command = |text: &str| command.send(text.as_bytes());
     let lists = (reply.ping_list().to_string(), reply.ping_host_name_list().to_string());
     // One stable, parseable line for scripts; the rest is for people.
-    println!("ID {} PASSWORD {}", reply.id, registration.password);
+    if opts.ipc {
+        ipc::emit(&Line::Id { id: reply.id.clone(), password: registration.password.clone() });
+    } else {
+        println!("ID {} PASSWORD {}", reply.id, registration.password);
+    }
     eprintln!("Waiting for a Windows UltraViewer to connect (backend: {}). Ctrl-C to stop.", backend.name);
 
     let mut core = Core::new(&registration.password, master_proof);
@@ -233,6 +241,9 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
                     match lower.as_str() {
                         "c" => {
                             core.set_control_allowed(!core.control_allowed());
+                            if opts.ipc {
+                                ipc::emit(&Line::Control(core.control_allowed()));
+                            }
                             eprintln!("Control is {}.", if core.control_allowed() { "allowed" } else { "off (view only)" });
                         }
                         "x" | "q" => core.end_viewer("You ended the incoming session."),
@@ -243,7 +254,11 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
                     eprintln!("No viewer is connected. m N / m all chooses the shared display.");
                 }
             }
-            Some(Event::StdinClosed) => {}
+            Some(Event::StdinClosed) => {
+                if stdin_closed(&mut core, opts.ipc) {
+                    stopping = true;
+                }
+            }
             Some(Event::Interrupt) => {
                 if stopping {
                     std::process::exit(130);
@@ -270,11 +285,6 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
         if in_flight.is_none() && core.take_capture_due(now) {
             request_capture(Purpose::Stream, &mut in_flight, selection);
         }
-        if core.awaiting_approval() && in_flight.is_none() {
-            if let (Some(control), true) = (opts.auto_approve, core.out.iter().any(|a| matches!(a, Action::Prompt(_)))) {
-                request_capture(Purpose::Approve { control }, &mut in_flight, selection);
-            }
-        }
         flush(&mut core, &relay, &input, &mut tools, opts);
         if let (Some(route), Some(w)) = (core.tools_route(), relay.as_ref().and_then(|r| r.writer.as_ref())) {
             for payload in tools.outgoing(route) {
@@ -293,6 +303,16 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
     }
 }
 
+/// In ipc mode a closed stdin means the front end is gone: the session must
+/// not outlive it, so end it and stop. A terminal user may close stdin and
+/// keep hosting.
+fn stdin_closed(core: &mut Core, ipc: bool) -> bool {
+    if ipc {
+        core.end_viewer("The LotusViewer window closed.");
+    }
+    ipc
+}
+
 fn send_peer(w: &FrameWriter, route: Route, bytes: &[u8]) {
     if let Err(e) = w.send(&wire::forward_envelope(route.address, route.port, false, bytes)) {
         eprintln!("Relay send failed: {e}");
@@ -308,18 +328,25 @@ fn flush(core: &mut Core, relay: &Option<Relay>, input: &mpsc::Sender<InputJob>,
                     send_peer(w, route, &bytes);
                 }
             }
+            Action::Status(s) if opts.ipc => ipc::emit(&Line::Status(s)),
             Action::Status(s) => eprintln!("{s}"),
             Action::Prompt(r) => {
                 let name = r.display_name.as_deref().unwrap_or("Unknown");
-                println!("REQUEST {} {name}", r.viewer_id);
-                match opts.auto_approve {
-                    Some(control) => eprintln!("Auto-approving {name} ({}).", if control { "view and control" } else { "view only" }),
-                    None => eprintln!("Incoming connection from {name} (claims ID {}).\n\
-                                       Allow? [y] view and control / [v] view only / [n] refuse (45 s):", r.viewer_id),
+                if opts.ipc {
+                    ipc::emit(&Line::Request { id: r.viewer_id.clone(), name: r.display_name.clone().unwrap_or_default() });
+                } else {
+                    println!("REQUEST {} {name}", r.viewer_id);
                 }
+                eprintln!("Incoming connection from {name} (claims ID {}).\n\
+                           Allow? [y] view and control / [v] view only / [n] refuse (45 s):", r.viewer_id);
             }
             Action::Connected(r) => {
-                println!("CONNECTED {}", r.viewer_id);
+                if opts.ipc {
+                    ipc::emit(&Line::Connected(r.viewer_id));
+                    ipc::emit(&Line::Control(core.control_allowed()));
+                } else {
+                    println!("CONNECTED {}", r.viewer_id);
+                }
                 eprintln!("{HELP}");
                 tools.connected();
             }
@@ -335,7 +362,11 @@ fn flush(core: &mut Core, relay: &Option<Relay>, input: &mpsc::Sender<InputJob>,
                 let _ = input.send(InputJob::Release);
             }
             Action::Ended(reason) => {
-                println!("ENDED {reason}");
+                if opts.ipc {
+                    ipc::emit(&Line::Ended(reason));
+                } else {
+                    println!("ENDED {reason}");
+                }
                 tools.reset();
             }
         }
@@ -359,4 +390,46 @@ fn open_relay(request: &RelayRequest, generation: u64, tx: &mpsc::Sender<Event>)
         }
     }
     relay
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{md5_hex, Ipv4};
+
+    fn viewer_waiting(core: &mut Core) -> Route {
+        let route = Route { address: Ipv4::parse("203.0.113.5").unwrap(), port: 4000 };
+        let proof = md5_hex("12345678pw");
+        let login = format!("login:12345678:{proof}:1920:1080:7:15:15:30:16:111222333:Windows viewer:1:{}:x:conn:2:45:0:0::6.6.133:0",
+                            "0".repeat(32));
+        core.on_peer(login.as_bytes(), route, Instant::now()).unwrap();
+        assert!(core.awaiting_approval());
+        core.out.clear();
+        route
+    }
+
+    #[test]
+    fn stdin_closed_in_ipc_mode_ends_the_viewer_and_stops() {
+        let mut core = Core::new("pw", None);
+        let route = viewer_waiting(&mut core);
+        assert!(stdin_closed(&mut core, true));
+        assert!(!core.has_viewer() && !core.awaiting_approval());
+        assert!(core.out.iter().any(|a| matches!(a, Action::Ended(_))));
+        // The viewer is told the session is over before the host exits.
+        assert!(core.out.iter().any(|a| matches!(a, Action::Peer(r, _) if *r == route)));
+    }
+
+    #[test]
+    fn stdin_closed_in_ipc_mode_stops_without_a_viewer() {
+        let mut core = Core::new("pw", None);
+        assert!(stdin_closed(&mut core, true));
+    }
+
+    #[test]
+    fn stdin_closed_in_a_terminal_keeps_hosting() {
+        let mut core = Core::new("pw", None);
+        viewer_waiting(&mut core);
+        assert!(!stdin_closed(&mut core, false));
+        assert!(core.awaiting_approval() && core.out.is_empty());
+    }
 }

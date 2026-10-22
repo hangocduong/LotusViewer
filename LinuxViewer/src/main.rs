@@ -6,18 +6,22 @@ use linuxviewer::wire::Result;
 
 const USAGE: &str = "usage:
   linuxviewer [gui]                         open the connect window (connect, recents, share this screen)
-  linuxviewer connect <ID> [--password P] [--clipboard] [--download-dir D] [--headless] [--no-lan]
+  linuxviewer connect <ID> [--password P | --password-stdin] [--clipboard] [--download-dir D] [--headless]
+                   [--no-lan] [--ipc]
                                             view and control a remote computer; lines typed in
-                                            the terminal are sent as chat, /send <path> sends a file
+                                            the terminal are sent as chat, /send <path> sends a file,
+                                            /accept <id> saves an offered file
   linuxviewer snapshot <ID> --password P -o out.png [--frames N] [--timeout S] [--no-lan]
                                             connect headless and save the remote screen as PNG
-  linuxviewer host [--auto-approve control|view] [--monitor N|all] [--clipboard]
+  linuxviewer host [--ipc] [--monitor N|all] [--clipboard]
                    [--backend x11|wayland|auto] [--download-dir PATH]
                                             let UltraViewer users connect to this computer
   linuxviewer id [--host]                   register and print this computer's ID and password
   linuxviewer master-password [--clear]     set or remove the hosting master password
 
-environment: LINUXVIEWER_NAME (display name), LINUXVIEWER_INSECURE_RELAY=1 (skip relay certificate checks)";
+--ipc: machine-readable stdout lines (see ipc.rs); the session ends when stdin closes.
+--password-stdin: the first stdin line is the password, so it is not in the process arguments.
+environment: LINUXVIEWER_NAME (display name)";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -36,10 +40,12 @@ fn run(args: &[String]) -> Result<()> {
             if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || id.len() > 64 {
                 return Err("The partner ID must be digits.".into());
             }
-            let password = match args.iter().position(|a| a == "--password") {
-                Some(i) => args.get(i + 1).cloned().ok_or("--password needs a value")?,
-                None => rpassword::prompt_password(format!("Password for {id}: "))?,
-            };
+            let source = linuxviewer::client::PasswordSource::parse(args)?;
+            let ipc = flag("--ipc");
+            if ipc {
+                linuxviewer::ipc::emit(&linuxviewer::ipc::Line::Hello);
+            }
+            let password = source.read(&id)?;
             if password.is_empty() {
                 return Err("Enter the partner's password.".into());
             }
@@ -52,7 +58,7 @@ fn run(args: &[String]) -> Result<()> {
             }
             let options = linuxviewer::client::ConnectOptions {
                 download_dir: Some(download_dir), clipboard: flag("--clipboard"), console: true,
-                no_lan_direct: flag("--no-lan"), ..Default::default()
+                no_lan_direct: flag("--no-lan"), ipc, ..Default::default()
             };
             if flag("--headless") {
                 return headless(&id, &password, options);

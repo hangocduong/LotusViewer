@@ -1,5 +1,5 @@
 //! MacRegistrationProfile.swift: stable ID/password/device identity stored in
-//! $XDG_CONFIG_HOME/linuxviewer (default ~/.config/linuxviewer), plus local
+//! $XDG_CONFIG_HOME/lotusviewer (default ~/.config/lotusviewer), plus local
 //! IPv4/MAC, host and user name. Network and platform values are refreshed on
 //! every load. OWNER: net.
 
@@ -150,12 +150,19 @@ impl Stored {
     }
 }
 
-fn config_dir() -> Result<PathBuf> {
-    let base = match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+const CONFIG_DIR_NAME: &str = "lotusviewer";
+
+/// Where every LotusViewer setting lives (profiles, recents, Wayland token).
+pub fn config_dir() -> Result<PathBuf> {
+    config_dir_in(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+}
+
+fn config_dir_in(xdg_config_home: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> Result<PathBuf> {
+    let base = match xdg_config_home.filter(|v| !v.is_empty()) {
         Some(x) => PathBuf::from(x),
-        None => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join(".config"),
+        None => PathBuf::from(home.ok_or("HOME is not set")?).join(".config"),
     };
-    Ok(base.join("linuxviewer"))
+    Ok(base.join(CONFIG_DIR_NAME))
 }
 
 fn master_password_proof_in(dir: &Path) -> Result<Option<String>> {
@@ -358,6 +365,28 @@ mod tests {
         assert!(normalize_mac("02:00:00:00:00:00").is_none());
         assert_eq!(fallback_mac("0123456789ABCDEF0123456789ABCDEF"), "0223456789AB");
         assert_eq!(device_identity(&[0; 16]).len(), 32);
+    }
+
+    #[test]
+    fn config_dir_is_lotusviewer() {
+        let xdg = config_dir_in(Some("/x/cfg".into()), Some("/home/u".into())).unwrap();
+        assert_eq!(xdg, Path::new("/x/cfg/lotusviewer"));
+        let home = config_dir_in(Some("".into()), Some("/home/u".into())).unwrap();
+        assert_eq!(home, Path::new("/home/u/.config/lotusviewer"));
+        assert!(config_dir_in(None, None).is_err());
+        assert!(config_dir().unwrap().ends_with("lotusviewer"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn settings_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("lotusviewer-perm-{}", crate::wire::hex(&random_bytes(6))));
+        make_private_dir(&dir).unwrap();
+        write_private(&dir.join(CLIENT_FILE), "x").unwrap();
+        assert_eq!(fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(dir.join(CLIENT_FILE)).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

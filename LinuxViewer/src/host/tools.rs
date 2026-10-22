@@ -8,6 +8,7 @@ use super::Options;
 use crate::chat::{self, ChatEvent};
 use crate::clipboard;
 use crate::files::{self, Engine, Message, Role, Update};
+use crate::ipc::{self, Line};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
@@ -15,12 +16,11 @@ pub struct Tools {
     engine: Engine,
     outbox: Vec<Vec<u8>>,
     download_dir: PathBuf,
-    auto_accept: bool,
+    ipc: bool,
     clipboard: Option<Clipboard>,
     connected: bool,
     /// Offered (id, name) pairs still waiting or in progress.
     pending_names: Vec<(String, String)>,
-    pending_accepts: Vec<String>,
 }
 
 /// Where received files are saved: --download-dir, XDG_DOWNLOAD_DIR, ~/Downloads.
@@ -68,8 +68,7 @@ impl Tools {
         Tools {
             engine: Engine::default(), outbox: Vec::new(),
             download_dir: opts.download_dir.clone().unwrap_or_else(default_download_dir),
-            auto_accept: opts.auto_approve.is_some(), clipboard, connected: false,
-            pending_names: Vec::new(), pending_accepts: Vec::new(),
+            ipc: opts.ipc, clipboard, connected: false, pending_names: Vec::new(),
         }
     }
 
@@ -88,7 +87,6 @@ impl Tools {
         self.engine.reset();
         self.outbox.clear();
         self.pending_names.clear();
-        self.pending_accepts.clear();
         if let Some(c) = &mut self.clipboard {
             c.enabled = false;
         }
@@ -163,6 +161,7 @@ impl Tools {
             return;
         }
         match chat::decode_host_payload(payload) {
+            Ok(Some(ChatEvent::Message(text))) if self.ipc => ipc::emit(&Line::Chat(text)),
             Ok(Some(ChatEvent::Message(text))) => println!("CHAT {text}"),
             Ok(Some(ChatEvent::Typing(_))) | Ok(None) => {}
             Err(e) => eprintln!("Ignored a chat message: {e}"),
@@ -187,23 +186,33 @@ impl Tools {
             match event {
                 files::Event::Offer(o) => {
                     self.pending_names.push((o.transfer_id.clone(), o.file_name.clone()));
-                    println!("FILE {} {} {}", o.transfer_id, o.size, o.file_name);
-                    if self.auto_accept {
-                        self.pending_accepts.push(o.transfer_id);
+                    if self.ipc {
+                        ipc::emit(&Line::File { id: o.transfer_id.clone(), size: o.size, name: o.file_name.clone() });
                     } else {
-                        eprintln!("The viewer offers {} ({} bytes). Type a {} to accept or r {} to refuse.",
-                                  o.file_name, o.size, o.transfer_id, o.transfer_id);
+                        println!("FILE {} {} {}", o.transfer_id, o.size, o.file_name);
                     }
+                    eprintln!("The viewer offers {} ({} bytes). Type a {} to accept or r {} to refuse.",
+                              o.file_name, o.size, o.transfer_id, o.transfer_id);
                 }
                 files::Event::Completed(id) => {
-                    println!("FILE-DONE {id}");
+                    if self.ipc {
+                        ipc::emit(&Line::FileDone(id.clone()));
+                    } else {
+                        println!("FILE-DONE {id}");
+                    }
                     self.pending_names.retain(|(i, _)| *i != id);
                 }
                 files::Event::Canceled(id) => {
+                    if self.ipc {
+                        ipc::emit(&Line::FileFail { id: id.clone(), reason: "Canceled".into() });
+                    }
                     eprintln!("File transfer {id} was canceled.");
                     self.pending_names.retain(|(i, _)| *i != id);
                 }
                 files::Event::Failed(id, reason) => {
+                    if self.ipc {
+                        ipc::emit(&Line::FileFail { id: id.clone(), reason: reason.clone() });
+                    }
                     eprintln!("File transfer {id} failed: {reason}");
                     self.pending_names.retain(|(i, _)| *i != id);
                 }
@@ -212,9 +221,6 @@ impl Tools {
         }
         for m in update.messages {
             self.outbox.push(m.encode(Role::Host).payload);
-        }
-        for id in std::mem::take(&mut self.pending_accepts) {
-            self.accept(&id);
         }
     }
 }
@@ -294,7 +300,7 @@ mod tests {
 
     fn tools(dir: &Path) -> Tools {
         let (tx, _rx) = mpsc::channel();
-        let opts = Options { auto_approve: Some(true), download_dir: Some(dir.into()), ..Default::default() };
+        let opts = Options { download_dir: Some(dir.into()), ..Default::default() };
         let mut t = Tools::new(&opts, tx);
         t.connected();
         t
@@ -334,8 +340,11 @@ mod tests {
         let mut t = tools(&d);
         let id = "31234567890123456789";
         t.incoming(format!("13|||{id}|||note.txt|||5").as_bytes(), route());
+        // Nothing is written or accepted until the user types a ID.
+        assert!(t.outgoing(route()).is_empty());
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
+        assert!(t.command(&format!("a {id}"), Some(route())));
         let out = t.outgoing(route());
-        // auto-accepted: command 14 accept
         assert_eq!(decode_multipart(&out[0]).unwrap()[0], [14, 0]);
         let mut chunk = format!("15|||{id}|||1|||").into_bytes();
         chunk.extend_from_slice(b"hello");

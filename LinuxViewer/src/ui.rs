@@ -207,6 +207,8 @@ struct App {
     sound: bool,
     /// Chat compose buffer while F8 chat mode is active.
     compose: Option<String>,
+    /// `--ipc`: the front end owns chat, so it is neither shown nor typed here.
+    ipc: bool,
     notice: Option<(String, Instant)>,
 }
 
@@ -275,7 +277,7 @@ impl App {
         let name = |s: &Self, id: &str| s.transfers.get(id).cloned().unwrap_or_else(|| "file".into());
         let text = match event {
             files::Event::Offer(o) => {
-                let t = format!("Receiving {} ({} KB)", o.file_name, o.size.div_ceil(1024));
+                let t = format!("{} offered ({} KB)", o.file_name, o.size.div_ceil(1024));
                 self.transfers.insert(o.transfer_id, o.file_name);
                 t
             }
@@ -690,6 +692,7 @@ impl App {
                 }
             }
             ClientEvent::File(e) => self.file_event(e),
+            ClientEvent::Chat(_) if self.ipc => {}
             ClientEvent::Chat(ChatEvent::Message(text)) => {
                 println!("Partner: {text}");
                 self.notify(format!("Partner: {text}"));
@@ -825,6 +828,7 @@ impl App {
                         return;
                     }
                     match code {
+                        KeyCode::F8 if self.ipc => {}
                         KeyCode::F8 => {
                             self.release_all();
                             self.compose = Some(String::new());
@@ -915,7 +919,7 @@ fn new_viewer(profile: Profile, partner_id: &str, password: &str, base: ConnectO
         session: None, pending: Some((profile, password.to_string())), proxy: Some(proxy), generation, done: false,
         clipboard: None, clipboard_sharing: false, last_clipboard: None, transfers: HashMap::new(),
         download_dir: base.download_dir.clone().unwrap_or(if downloads.is_dir() { downloads } else { home }),
-        clipboard_at_start: base.clipboard, base,
+        ipc: base.ipc, clipboard_at_start: base.clipboard, base,
         partner_id: partner_id.to_string(), state: "connecting…".into(), close_reason: None,
         window: None, surface: None, control: true, view_only: false, encoder: None, origin: (0, 0),
         monitors: Vec::new(), monitor: 0, layout: None, zoom: None, title_after_draw: false, pan_focus: (0.5, 0.5), pointer: None, modifiers: ModifiersState::empty(),

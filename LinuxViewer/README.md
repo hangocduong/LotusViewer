@@ -83,8 +83,8 @@ While hosting, a viewer that connects is shown in the terminal:
 | `c` + Enter | Turn the viewer's control on/off during the session |
 | `x` + Enter | End the session |
 
-Settings are stored in `$XDG_CONFIG_HOME/linuxviewer/` (normally
-`~/.config/linuxviewer/`). Set `LINUXVIEWER_NAME` to change the display name
+Settings are stored in `$XDG_CONFIG_HOME/lotusviewer/` (normally
+`~/.config/lotusviewer/`). Set `LINUXVIEWER_NAME` to change the display name
 the other side sees.
 
 ## Layout

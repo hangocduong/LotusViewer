@@ -68,3 +68,5 @@ linux-viewer/
 
 # Rust (LinuxViewer)
 /LinuxViewer/target/
+
+/LinuxViewer/vendor/

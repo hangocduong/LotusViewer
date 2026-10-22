@@ -146,7 +146,9 @@ impl Tools {
         }
     }
 
-    pub fn incoming(&mut self, payload: &[u8], _route: Route) {
+    /// `control` is whether the viewer may act on this computer; a view-only
+    /// viewer cannot write the clipboard.
+    pub fn incoming(&mut self, payload: &[u8], _route: Route, control: bool) {
         if let Some(message) = Message::decode_viewer_payload(payload) {
             let u = self.engine.consume(message);
             self.apply(u);
@@ -154,7 +156,7 @@ impl Tools {
         }
         if payload.starts_with(b"33|||") || payload.starts_with(b"5|||") {
             match (&mut self.clipboard, clipboard::decode_normalized_viewer_to_host(payload)) {
-                (Some(c), Ok(text)) if c.enabled => c.set(text),
+                (Some(c), Ok(text)) if c.enabled && control => c.set(text),
                 (Some(_), Err(e)) => eprintln!("Ignored a clipboard update: {e}"),
                 _ => {}
             }
@@ -331,7 +333,7 @@ mod tests {
         assert_eq!(out, [chat::host_to_viewer("hello").unwrap()]);
         assert!(!t.command("hello", Some(route())));
         assert!(t.command("t hi", None) && t.outgoing(route()).is_empty());
-        t.incoming(b"12|||from viewer", route());
+        t.incoming(b"12|||from viewer", route(), true);
     }
 
     #[test]
@@ -339,7 +341,7 @@ mod tests {
         let d = tempdir("recv");
         let mut t = tools(&d);
         let id = "31234567890123456789";
-        t.incoming(format!("13|||{id}|||note.txt|||5").as_bytes(), route());
+        t.incoming(format!("13|||{id}|||note.txt|||5").as_bytes(), route(), false);
         // Nothing is written or accepted until the user types a ID.
         assert!(t.outgoing(route()).is_empty());
         assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
@@ -348,7 +350,7 @@ mod tests {
         assert_eq!(decode_multipart(&out[0]).unwrap()[0], [14, 0]);
         let mut chunk = format!("15|||{id}|||1|||").into_bytes();
         chunk.extend_from_slice(b"hello");
-        t.incoming(&chunk, route());
+        t.incoming(&chunk, route(), false);
         let out = t.outgoing(route());
         assert_eq!(decode_multipart(&out[0]).unwrap()[0], [21, 0]);
         assert_eq!(std::fs::read(d.join("note.txt")).unwrap(), b"hello");
@@ -365,5 +367,19 @@ mod tests {
         assert_eq!(decode_multipart(&out[0]).unwrap()[0], [13, 0]);
         t.reset();
         assert_eq!(t.engine.count(), 0);
+    }
+
+    #[test]
+    fn clipboard_from_the_viewer_needs_control() {
+        let d = tempdir("clip");
+        let mut t = tools(&d);
+        let (set_tx, set_rx) = mpsc::channel();
+        let (_changed_tx, changed_rx) = mpsc::channel();
+        t.clipboard = Some(Clipboard { enabled: true, set_tx, changed_rx });
+        let copy = clipboard::viewer_to_host("lệnh lạ", clipboard::ViewerEncoding::Compressed).unwrap().payload;
+        t.incoming(&copy, route(), false);
+        assert!(set_rx.try_recv().is_err(), "a view-only viewer must not write the host clipboard");
+        t.incoming(&copy, route(), true);
+        assert_eq!(set_rx.try_recv().unwrap(), "lệnh lạ");
     }
 }

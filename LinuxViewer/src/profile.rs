@@ -31,11 +31,12 @@ pub struct Profile {
 impl Profile {
     /// The viewer's own identity ("Client" in MacViewer).
     pub fn load_or_create() -> Result<Self> {
-        Self::load_in(&config_dir()?, CLIENT_FILE, None, false)
+        Self::load_in(&config_dir()?, CLIENT_FILE, None, false, false)
     }
 
     /// The hosting identity, kept apart so viewing and hosting get separate
-    /// IDs. Registers the master password proof when one is set.
+    /// IDs. Registers the master password proof when one is set. The ID is
+    /// stable and the random password is new on every call.
     ///
     /// The relay assigns IDs by MAC address (device_identity alone does not
     /// change it), so only the host sends the hardware MAC; the viewer sends a
@@ -44,7 +45,7 @@ impl Profile {
     pub fn load_or_create_host() -> Result<Self> {
         let dir = config_dir()?;
         let proof = master_password_proof_in(&dir)?;
-        Self::load_in(&dir, HOST_FILE, proof, true)
+        Self::load_in(&dir, HOST_FILE, proof, true, true)
     }
 
     /// Empty-free MD5 proof of the master password, if one is set.
@@ -80,21 +81,10 @@ impl Profile {
         &self.path
     }
 
-    fn load_in(dir: &Path, file: &str, master_proof: Option<String>, hardware_mac: bool) -> Result<Self> {
+    fn load_in(dir: &Path, file: &str, master_proof: Option<String>, hardware_mac: bool, new_password: bool) -> Result<Self> {
         make_private_dir(dir)?;
         let path = dir.join(file);
-        let mut stored = Stored::default();
-        if path.exists() {
-            let meta = fs::metadata(&path)?;
-            if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_PROFILE_BYTES {
-                return Err(format!("The saved profile {} is invalid.", path.display()).into());
-            }
-            stored = Stored::parse(&fs::read_to_string(&path)?)
-                .ok_or_else(|| format!("The saved profile {} is invalid; fix or delete it.", path.display()))?;
-        } else {
-            stored.device_identity = device_identity(&random_bytes(16));
-            stored.password = random_string(8, b"0123456789");
-        }
+        let stored = Stored::load_or_create(&path, new_password)?;
         let env_name = std::env::var("LINUXVIEWER_NAME").unwrap_or_default();
         let display_name: String = if env_name.trim().is_empty() { stored.display_name.clone() } else { env_name }
             .trim().chars().take(64).collect();
@@ -124,6 +114,30 @@ struct Stored {
 }
 
 impl Stored {
+    /// The saved profile, or a new one when the file is missing. `new_password`
+    /// replaces the saved password, so one never outlives the run that showed it.
+    fn load_or_create(path: &Path, new_password: bool) -> Result<Self> {
+        let mut stored = Stored::default();
+        if path.exists() {
+            let meta = fs::metadata(&path)?;
+            if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_PROFILE_BYTES {
+                return Err(format!("The saved profile {} is invalid.", path.display()).into());
+            }
+            stored = Stored::parse(&fs::read_to_string(&path)?)
+                .ok_or_else(|| format!("The saved profile {} is invalid; fix or delete it.", path.display()))?;
+        } else {
+            stored.device_identity = device_identity(&random_bytes(16));
+            stored.password = random_string(8, b"0123456789");
+        }
+        if new_password {
+            let previous = stored.password.clone();
+            while stored.password == previous {
+                stored.password = random_string(8, b"0123456789");
+            }
+        }
+        Ok(stored)
+    }
+
     fn parse(text: &str) -> Option<Self> {
         let mut s = Stored::default();
         for line in text.lines() {
@@ -392,16 +406,34 @@ mod tests {
     #[test]
     fn creates_and_reloads_profile() {
         let dir = std::env::temp_dir().join(format!("linuxviewer-test-{}", crate::wire::hex(&random_bytes(6))));
-        let a = Profile::load_in(&dir, CLIENT_FILE, None, false);
+        let a = Profile::load_in(&dir, CLIENT_FILE, None, false, false);
         // No network in some sandboxes: only assert when discovery worked.
         if let Ok(a) = a {
-            let b = Profile::load_in(&dir, CLIENT_FILE, Some("0".repeat(32)), false).unwrap();
+            let b = Profile::load_in(&dir, CLIENT_FILE, Some("0".repeat(32)), false, false).unwrap();
             assert_eq!(a.registration.mac_address, b.registration.mac_address);
             assert_eq!(a.registration.device_identity, b.registration.device_identity);
             assert_eq!(a.registration.password, b.registration.password);
             assert_eq!(b.registration.custom_password, "0".repeat(32));
             assert_eq!(a.registration.text().unwrap().split(':').count(), 28);
         }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn host_password_changes_every_load_but_the_id_stays() {
+        let dir = std::env::temp_dir().join(format!("lotusviewer-pw-{}", crate::wire::hex(&random_bytes(6))));
+        make_private_dir(&dir).unwrap();
+        let path = dir.join(HOST_FILE);
+        let first = Stored::load_or_create(&path, true).unwrap();
+        write_private(&path, &first.render()).unwrap();
+        let second = Stored::load_or_create(&path, true).unwrap();
+        assert_eq!(first.device_identity, second.device_identity);
+        assert_ne!(first.password, second.password);
+        assert!(second.password.len() == 8 && second.password.bytes().all(|b| b.is_ascii_digit()));
+        // The viewing profile keeps its password.
+        write_private(&path, &second.render()).unwrap();
+        let third = Stored::load_or_create(&path, false).unwrap();
+        assert_eq!(second.password, third.password);
         let _ = fs::remove_dir_all(dir);
     }
 }

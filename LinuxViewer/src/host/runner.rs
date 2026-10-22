@@ -355,7 +355,7 @@ fn flush(core: &mut Core, relay: &Option<Relay>, input: &mpsc::Sender<InputJob>,
             }
             Action::Tool(payload) => {
                 if let Some(route) = core.tools_route() {
-                    tools.incoming(&payload, route);
+                    tools.incoming(&payload, route, core.control_allowed());
                 }
             }
             Action::ReleaseInput => {

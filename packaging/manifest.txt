@@ -1,0 +1,23 @@
+# manifest.txt — nội dung gói `lotusviewer`. `packaging/build-deb.sh` chỉ đưa vào gói những tệp ghi ở đây.
+#
+# Cột: <mode> <đích trong gói> <nguồn từ gốc repo | @engine | @gui-conf>
+#   @engine    binary engine vừa dựng (`LinuxViewer/target/release/linuxviewer`)
+#   @gui-conf  tệp truyền qua `--gui-conf`, màu dẫn xuất từ token LotusOS lúc dựng
+#
+# Không có maintainer script, conffile hay tệp dưới /etc. Engine không nằm trên PATH.
+0755 /usr/bin/lotusviewer                                        packaging/lotusviewer
+0755 /usr/lib/lotusviewer/lotusviewer-engine                     @engine
+0644 /usr/lib/lotusviewer/lotusviewer/__init__.py                lotusviewer-gtk/lotusviewer/__init__.py
+0644 /usr/lib/lotusviewer/lotusviewer/__main__.py                lotusviewer-gtk/lotusviewer/__main__.py
+0644 /usr/lib/lotusviewer/lotusviewer/cai_dat.py                 lotusviewer-gtk/lotusviewer/cai_dat.py
+0644 /usr/lib/lotusviewer/lotusviewer/chuoi.py                   lotusviewer-gtk/lotusviewer/chuoi.py
+0644 /usr/lib/lotusviewer/lotusviewer/duyet.py                   lotusviewer-gtk/lotusviewer/duyet.py
+0644 /usr/lib/lotusviewer/lotusviewer/engine.py                  lotusviewer-gtk/lotusviewer/engine.py
+0644 /usr/lib/lotusviewer/lotusviewer/model.py                   lotusviewer-gtk/lotusviewer/model.py
+0644 /usr/lib/lotusviewer/lotusviewer/phien.py                   lotusviewer-gtk/lotusviewer/phien.py
+0644 /usr/lib/lotusviewer/lotusviewer/window.py                  lotusviewer-gtk/lotusviewer/window.py
+0644 /usr/share/lotusviewer/gui.conf                             @gui-conf
+0644 /usr/share/applications/vn.lotusos.LotusViewer.desktop      packaging/vn.lotusos.LotusViewer.desktop
+0644 /usr/share/icons/hicolor/scalable/apps/vn.lotusos.LotusViewer.svg lotusviewer-gtk/data/vn.lotusos.LotusViewer.svg
+0644 /usr/share/doc/lotusviewer/copyright                        packaging/copyright
+0644 /usr/share/doc/lotusviewer/THIRD_PARTY_NOTICES.md           THIRD_PARTY_NOTICES.md

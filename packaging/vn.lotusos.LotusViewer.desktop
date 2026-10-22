@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=LotusViewer
+GenericName=Hỗ trợ từ xa
+Comment=Nhận hỗ trợ từ xa hoặc điều khiển máy khác qua UltraViewer
+Keywords=hỗ trợ;từ xa;điều khiển;UltraViewer;
+Exec=/usr/bin/lotusviewer
+Icon=vn.lotusos.LotusViewer
+Terminal=false
+StartupNotify=true
+Categories=Network;RemoteAccess;

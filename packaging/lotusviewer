@@ -1,0 +1,8 @@
+#!/usr/bin/python3 -IB
+"""Mở giao diện LotusViewer từ /usr/lib/lotusviewer."""
+import sys
+
+sys.path.insert(0, "/usr/lib/lotusviewer")
+from lotusviewer.__main__ import main  # noqa: E402
+
+sys.exit(main())

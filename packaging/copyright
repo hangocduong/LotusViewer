@@ -1,0 +1,104 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: LotusViewer
+Upstream-Contact: LotusOS <hotro@lotusos.vn>
+Source: https://github.com/hangocduong/LotusViewer
+Comment:
+ LotusViewer là fork của DeanOpen/MacViewer (https://github.com/DeanOpen/MacViewer),
+ giữ lịch sử, giấy phép MIT và ghi công của upstream.
+ .
+ LotusViewer không phải sản phẩm chính thức của UltraViewer và không được
+ UltraViewer chứng thực. Engine dùng relay của bên thứ ba.
+
+Files: *
+Copyright: 2026 MacViewer contributors (DeanOpen/MacViewer)
+License: MIT
+
+Files: lotusviewer-gtk/* packaging/* LinuxViewer/src/ipc.rs
+Copyright: 2026 LotusOS
+License: MIT
+Comment: Phần sửa đổi của LotusOS: giao diện GTK3, đóng gói và bộ vá engine
+ liệt kê trong LOTUSVIEWER.md của repo nguồn.
+
+Files: Sources/UltraViewerProtocol/Resources/8bit.dat
+Copyright: UltraViewer
+License: other
+ Dictionary Zstandard do UltraViewer cung cấp, nhúng vào engine nguyên trạng
+ như upstream. Kích thước 112640 byte, dictionary ID 0x3da0bd10,
+ SHA256 9aa45789d9ff9d329a623a685d57b67e33c777019de9ce1f273f21860e4bfe6b.
+ .
+ Tệp này không phải open-source, không có giấy phép phân phối lại và không
+ thuộc giấy phép MIT của mã nguồn. LotusOS phân phối theo quyết định của pháp
+ nhân Hải Anh, và quyết định này không tạo ra quyền nào từ UltraViewer.
+ .
+ LotusViewer không phải sản phẩm chính thức của UltraViewer.
+
+Files: ThirdParty/zstd/*
+Copyright: Meta Platforms, Inc. and affiliates
+License: BSD-3-Clause
+Comment: Engine nhúng tĩnh Zstandard 1.5.7 qua crate zstd-sys
+ (2.1.2+zstd.1.5.7). Nguồn Zstandard còn có lựa chọn GPLv2; LotusOS dùng theo
+ BSD. Notice gốc ở ThirdParty/zstd/LICENSE và ThirdParty/zstd/COPYING của repo
+ nguồn.
+
+Files: LinuxViewer/src/audio.rs
+Copyright: 2005 Steve Underwood
+ 1993 CMU Computer Science, Speech Group, Chengxiang Lu and Alex Hauptmann
+ 2011 The WebRTC project authors
+License: public-domain and BSD-3-Clause
+Comment: Bộ giải mã G.722 chuyển từ SpanDSP/WebRTC trong ThirdParty/g722.
+ Steve Underwood đặt phần đóng góp của mình vào public domain; phần WebRTC theo
+ giấy phép BSD dưới đây.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+License: BSD-3-Clause
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+ .
+  * Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimer.
+ .
+  * Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+ .
+  * Neither the name of the copyright holder nor the names of its contributors
+    may be used to endorse or promote products derived from this software
+    without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ .
+ Bản Zstandard: "Neither the name Facebook, nor Meta, nor the names of its
+ contributors ...". Bản WebRTC: "Neither the name of Google nor the names of
+ its contributors ...".
+
+License: public-domain
+ Steve Underwood: "Despite my general liking of the GPL, I place my own
+ contributions to this code in the public domain for the benefit of all
+ mankind".

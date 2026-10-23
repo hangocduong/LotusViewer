@@ -38,7 +38,17 @@ def test_connect_ignores_requests_and_names_the_partner():
     p = model.Phien("connect")
     assert p.apply(Event("request", peer="9", text="x")) is None
     p.apply(Event("connected", peer="123456789"))
+    assert p.headline() == "Đang xem 123 456 789 (chỉ xem)"
+
+
+def test_connect_headline_tracks_view_only_and_control_events():
+    p = model.Phien("connect")
+    p.apply(Event("connected", peer="123456789"))
+    assert p.headline() == "Đang xem 123 456 789 (chỉ xem)"
+    p.apply(Event("control", on=True))
     assert p.headline() == "Đang điều khiển 123 456 789"
+    p.apply(Event("control", on=False))
+    assert p.headline() == "Đang xem 123 456 789 (chỉ xem)"
 
 
 def test_other_protocol_versions_are_refused():

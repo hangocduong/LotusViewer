@@ -2,7 +2,7 @@
 
 LotusViewer là fork của [DeanOpen/MacViewer](https://github.com/DeanOpen/MacViewer), giữ lịch sử và giấy phép MIT của mã nguồn upstream. Giữ nguyên attribution trong `LICENSE` và `THIRD_PARTY_NOTICES.md`.
 
-Thay đổi của LotusOS hiện có: ghim toolchain Rust; dùng crate vendored ngoài Git; cấu hình release một codegen unit, bỏ symbols; đóng gói engine thành `.deb` tái lập; bộ vá engine dưới đây. Chưa có launcher GTK3 và chưa đo phiên với UltraViewer Windows.
+Thay đổi của LotusOS hiện có: ghim toolchain Rust; dùng crate vendored ngoài Git; cấu hình release một codegen unit, bỏ symbols; đóng gói engine thành `.deb` tái lập; bộ vá engine dưới đây. Launcher GTK3 nằm trong `lotusviewer-gtk/`. Bằng chứng VM và điều kiện phát hành do kho LotusOS quản lý.
 
 ## Bộ vá engine
 
@@ -32,5 +32,8 @@ Khi merge upstream, giữ nguyên các điểm này; test trong `cargo test` can
 6. **Thư mục cấu hình** là `$XDG_CONFIG_HOME/lotusviewer/`, mặc định `~/.config/lotusviewer/`. Thư mục có mode 0700, tệp hồ sơ 0600. Recents và token Wayland cũng nằm ở đây. Không di trú từ `linuxviewer`.
 7. **Mật khẩu host đổi mỗi lượt chạy.** ID giữ nguyên (khoá theo `device_identity` và MAC), mật khẩu 8 chữ số được sinh lại mỗi lần `host` khởi động và ghi đè `host-profile`. Hồ sơ phía connect không đổi.
 8. **Clipboard từ viewer cần quyền điều khiển.** Ở chế độ chỉ xem (`v`, hoặc sau lệnh `c` tắt điều khiển), engine bỏ clipboard viewer gửi tới, như bỏ sự kiện chuột và phím. Chia sẻ clipboard vẫn chỉ chạy khi người dùng bật khi bắt đầu phiên.
+
+9. **Từ chối khác hết giờ.** Khi đang chờ duyệt, lệnh `n` gửi mã 39 (blocked); hết 45 giây hoặc kết thúc phiên vẫn gửi 27. Client giữ lý do blocked cả trước khởi tạo qua relay và LAN. Cần đo lại tương thích với UltraViewer Windows trước receipt.
+10. **Nhận diện và trạng thái phiên.** Tên login mặc định và tiêu đề cửa sổ dùng LotusViewer; tiêu đề dịch nhãn điều khiển, âm thanh, phóng, màn hình và trợ giúp. Nội dung `HELP` giữ nguyên. GTK dịch lý do remote disconnected, hiển thị chỉ xem theo `CONTROL off` và yêu cầu hộp nhận tệp nằm trên cửa sổ phiên; vẫn chỉ nhận sau khi người dùng duyệt.
 
 Đây không phải sản phẩm chính thức của UltraViewer, không được UltraViewer chứng thực. Engine phụ thuộc relay bên thứ ba. `Sources/UltraViewerProtocol/Resources/8bit.dat` là tài nguyên do UltraViewer cung cấp, không có giấy phép phân phối lại và không thuộc MIT; không phải open-source. Chủ dự án ngày 2026-10-21 quyết định đóng kèm như upstream; pháp nhân Hải Anh nhận rủi ro phân phối và ToS UltraViewer chưa được rà soát đầy đủ.

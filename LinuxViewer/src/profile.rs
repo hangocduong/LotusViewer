@@ -15,7 +15,7 @@ const CLIENT_FILE: &str = "profile";
 const HOST_FILE: &str = "host-profile";
 const MASTER_FILE: &str = "master-password";
 const MAX_PROFILE_BYTES: u64 = 65_536;
-pub const DEFAULT_DISPLAY_NAME: &str = "LinuxViewer";
+pub const DEFAULT_DISPLAY_NAME: &str = "LotusViewer";
 pub const MIN_MASTER_PASSWORD: usize = 8;
 pub const MAX_MASTER_PASSWORD: usize = 64;
 
@@ -159,7 +159,7 @@ impl Stored {
     }
 
     fn render(&self) -> String {
-        format!("# LinuxViewer registration profile. Deleting it gives this computer a new ID.\n\
+        format!("# LotusViewer registration profile. Deleting it gives this computer a new ID.\n\
                  device_identity={}\npassword={}\ndisplay_name={}\n", self.device_identity, self.password, self.display_name)
     }
 }
@@ -356,6 +356,17 @@ fn fallback_mac(device_identity: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_login_name_uses_the_product_name() {
+        let mut profile = Profile::default();
+        assert_eq!(profile.login_display_name(), "LotusViewer");
+        profile.display_name = " :! ".into();
+        assert_eq!(profile.login_display_name(), "LotusViewer");
+        profile.display_name = "Support Desk".into();
+        assert_eq!(profile.login_display_name(), "Support Desk");
+        assert_eq!(login_wire_name(DEFAULT_DISPLAY_NAME), "LotusViewer");
+    }
 
     #[test]
     fn stored_round_trip_and_validation() {

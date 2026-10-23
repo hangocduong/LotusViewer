@@ -836,7 +836,10 @@ impl Run {
             if self.lan.selected != Some(id) {
                 // A pending candidate proves acceptance only by a complete init.
                 if command != 0 {
-                    if [22, 27, 39, 41, 54].contains(&command) {
+                    if command == 39 {
+                        return Ok(Flow::Stop("The remote computer blocked this connection.".into()));
+                    }
+                    if [22, 27, 41, 54].contains(&command) {
                         return Ok(Flow::Stop("The remote computer disconnected.".into()));
                     }
                     return Ok(Flow::Continue);
@@ -1004,6 +1007,25 @@ mod tests {
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn blocked_before_connected_preserves_the_reason_on_relay_and_lan() {
+        for source in [Source::Relay { ip: Ipv4::parse("203.0.113.5").unwrap(), port: 4000 }, Source::Direct(1)] {
+            let mut run = Run {
+                profile: Profile::default(), partner_id: "123".into(), password: String::new(),
+                screen: Arc::default(), shared: Arc::new(Shared::default()), notify: Box::new(|_| {}),
+                connection_hash: String::new(), local_id: String::new(), peer: None, refreshes: 0,
+                accepted: false, options: ConnectOptions::default(), lan: LanState::default(),
+                listener: None, writers: HashMap::new(), candidates_seen: 0, direct_window: None,
+                direct_deadline: None, relay_failed: false,
+            };
+            assert!(!run.active());
+            let payload = crate::wire::encode_multipart(&[&[39]]);
+            let parts = crate::wire::decode_multipart(&payload).unwrap();
+            assert!(matches!(run.consume_app(&parts, source).unwrap(), Flow::Stop(reason)
+                if reason == "The remote computer blocked this connection."));
+        }
     }
 
     fn download_dir(name: &str) -> std::path::PathBuf {

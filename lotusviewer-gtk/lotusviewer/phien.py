@@ -27,7 +27,9 @@ class HopNhanTep(Gtk.Dialog):
                           wrap=True, max_width_chars=48, margin=12)
         self.get_content_area().add(label)
         self.connect("response", self._on_response)
+        self.set_keep_above(True)
         self.show_all()
+        self.present()
 
     def _on_response(self, _dialog, response: int) -> None:
         self.answer(response == Gtk.ResponseType.ACCEPT)

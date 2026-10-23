@@ -39,6 +39,7 @@ DUYET_DIEU_KHIEN = "Cho xem và điều khiển"
 
 PHIEN_DUOC_HO_TRO = "Đang được hỗ trợ bởi {ten}"
 PHIEN_DIEU_KHIEN = "Đang điều khiển {id}"
+PHIEN_CHI_XEM_DIEU_KHIEN = "Đang xem {id} (chỉ xem)"
 PHIEN_CHO_PHEP_DIEU_KHIEN = "Cho phép điều khiển"
 PHIEN_DUOC_DIEU_KHIEN = "Máy kia cho phép điều khiển. Bật tắt bằng phím F12 trong cửa sổ phiên."
 PHIEN_CHI_XEM = "Máy kia chỉ cho xem."
@@ -83,6 +84,7 @@ LOI_GUI_TEP = "Không gửi được tệp này."
 
 # Lý do kết thúc và trạng thái của engine → câu tiếng Việt. Khoá là tiền tố câu tiếng Anh.
 LY_DO = (
+    ("The remote computer disconnected", "Máy kia đã ngắt kết nối."),
     ("The incoming request was declined", "Đã từ chối kết nối."),
     ("The incoming connection timed out", "Kết nối hết thời gian chờ. Hãy nhờ máy kia kết nối lại."),
     ("The incoming relay did not provide an address", "Kết nối không hoàn tất. Hãy nhờ máy kia kết nối lại."),

@@ -76,6 +76,13 @@ enum Phase {
     Streaming,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum EndReason {
+    Refused,
+    TimedOut,
+    Ended,
+}
+
 struct Peer {
     request: Request,
     login: LoginRequest,
@@ -161,7 +168,7 @@ impl Core {
             return Ok(());
         }
         match peer_tag(payload) {
-            b"19" => self.end_viewer("The Windows computer disconnected."),
+            b"19" => self.end_viewer(EndReason::Ended, "The Windows computer disconnected."),
             b"20" => self.out.push(Action::Peer(route, encode::keepalive_reply())),
             b"18" if self.phase == Phase::Streaming && self.waiting_ack => {
                 self.waiting_ack = false;
@@ -169,7 +176,7 @@ impl Core {
                 self.capture_at = Some(now + self.pacing.delay(true));
             }
             b"32" if payload == b"32|||1" => {
-                self.end_viewer("The Windows viewer requested an unsupported screen color mode. Use 16-bit color.")
+                self.end_viewer(EndReason::Ended, "The Windows viewer requested an unsupported screen color mode. Use 16-bit color.")
             }
             _ if payload.starts_with(b"8|||") || payload.starts_with(&[30, 124, 124, 124]) => {
                 if self.phase == Phase::Streaming && self.control && payload.len() <= 4096 {
@@ -237,8 +244,8 @@ impl Core {
     }
 
     pub fn decline(&mut self) {
-        if self.peer.is_some() {
-            self.end_viewer("The incoming request was declined.");
+        if self.phase == Phase::Approval {
+            self.end_viewer(EndReason::Refused, "The incoming request was declined.");
         }
     }
 
@@ -278,7 +285,7 @@ impl Core {
     /// Expires approval, initialization and acknowledgment deadlines.
     pub fn tick(&mut self, now: Instant) {
         if self.peer.is_some() && self.deadline.is_some_and(|t| t <= now) {
-            self.end_viewer("The incoming connection timed out. Ask Windows to connect again.");
+            self.end_viewer(EndReason::TimedOut, "The incoming connection timed out. Ask Windows to connect again.");
         }
     }
 
@@ -329,7 +336,7 @@ impl Core {
         Ok(())
     }
 
-    pub fn end_viewer(&mut self, reason: &str) {
+    pub(super) fn end_viewer(&mut self, why: EndReason, reason: &str) {
         let old = self.peer.take();
         self.phase = Phase::None;
         self.tools_connected = false;
@@ -342,7 +349,7 @@ impl Core {
         self.out.push(Action::ReleaseInput);
         if let Some(old) = old {
             self.out.push(Action::Ended(reason.into()));
-            self.out.push(Action::Peer(old.route, single(27)));
+            self.out.push(Action::Peer(old.route, single(match why { EndReason::Refused => 39, EndReason::TimedOut | EndReason::Ended => 27 })));
         }
     }
 
@@ -373,6 +380,48 @@ mod tests {
 
     fn sent(core: &mut Core) -> Vec<Vec<u8>> {
         core.out.drain(..).filter_map(|a| if let Action::Peer(_, b) = a { Some(b) } else { None }).collect()
+    }
+
+    #[test]
+    fn refusal_during_approval_sends_blocked_and_releases_the_peer() {
+        let mut core = Core::new("pw", None);
+        core.on_peer(&login_payload("pw", "2"), route(), Instant::now()).unwrap();
+        assert!(core.awaiting_approval());
+        core.out.clear();
+        core.decline();
+        assert!(core.out.contains(&Action::ReleaseInput));
+        assert!(core.out.contains(&Action::Ended("The incoming request was declined.".into())));
+        assert_eq!(sent(&mut core), [single(39)]);
+        assert!(!core.has_viewer() && !core.control_allowed());
+        assert!(core.next_wake().is_none());
+        core.decline();
+        assert!(core.out.is_empty());
+    }
+
+    #[test]
+    fn approval_timeout_keeps_the_disconnect_code() {
+        let mut core = Core::new("pw", None);
+        let now = Instant::now();
+        core.on_peer(&login_payload("pw", "2"), route(), now).unwrap();
+        core.out.clear();
+        core.tick(now + Duration::from_secs(44));
+        assert!(core.out.is_empty() && core.awaiting_approval());
+        core.tick(now + Duration::from_secs(45));
+        assert_eq!(sent(&mut core), [single(27)]);
+        assert!(!core.has_viewer());
+    }
+
+    #[test]
+    fn decline_after_approval_does_not_end_a_running_session() {
+        let mut core = Core::new("pw", None);
+        let now = Instant::now();
+        core.on_peer(&login_payload("pw", "2"), route(), now).unwrap();
+        core.approve(frame(1), false, now).unwrap();
+        core.out.clear();
+        core.decline();
+        assert!(core.out.is_empty() && core.has_viewer());
+        core.end_viewer(EndReason::Ended, "You ended the incoming session.");
+        assert_eq!(sent(&mut core), [single(27)]);
     }
 
     // HostCapturePacingTests.swift

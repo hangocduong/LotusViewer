@@ -5,7 +5,7 @@ use super::backend::{self, Backend, CaptureJob, InputJob};
 use super::encode::Frame;
 use super::layout::{Layout, Selection};
 use super::login::{self, RelayAddress, RelayRequest};
-use super::session::{Action, Core, Route};
+use super::session::{Action, Core, EndReason, Route};
 use super::tools::Tools;
 use super::Options;
 use crate::command::CommandConnection;
@@ -174,7 +174,7 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
                 }
             }
             Some(Event::CommandClosed(e)) => {
-                core.end_viewer("The host stopped.");
+                core.end_viewer(EndReason::Ended, "The host stopped.");
                 flush(&mut core, &relay, &input, &mut tools, opts);
                 return Err(format!("The UltraViewer command channel closed: {e}").into());
             }
@@ -201,7 +201,7 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
             Some(Event::RelayClosed(generation, e)) => {
                 if relay.as_ref().is_some_and(|r| r.generation == generation) {
                     relay = None;
-                    core.end_viewer(&format!("The incoming relay disconnected: {e}"));
+                    core.end_viewer(EndReason::Ended, &format!("The incoming relay disconnected: {e}"));
                 }
             }
             Some(Event::Captured(t, result)) => {
@@ -211,7 +211,7 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
                         (Purpose::Approve { control }, Ok(frame)) if core.awaiting_approval() => core.approve(frame, control, now)?,
                         (Purpose::Stream, Ok(frame)) => core.submit_frame(frame, now)?,
                         (_, Err(e)) if core.has_viewer() => {
-                            core.end_viewer(&format!("Screen capture failed: {e}"));
+                            core.end_viewer(EndReason::Ended, &format!("Screen capture failed: {e}"));
                             if selection != Selection::All {
                                 eprintln!("Tip: the selected display may be gone; type m all to share every display.");
                             }
@@ -246,7 +246,7 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
                             }
                             eprintln!("Control is {}.", if core.control_allowed() { "allowed" } else { "off (view only)" });
                         }
-                        "x" | "q" => core.end_viewer("You ended the incoming session."),
+                        "x" | "q" => core.end_viewer(EndReason::Ended, "You ended the incoming session."),
                         "" => {}
                         _ => if !tools.command(answer, core.tools_route()) { eprintln!("{HELP}") },
                     }
@@ -265,14 +265,14 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
                 }
                 stopping = true;
                 eprintln!("\nStopping…");
-                core.end_viewer("The host stopped sharing.");
+                core.end_viewer(EndReason::Ended, "The host stopped sharing.");
             }
             Some(Event::ToolsWake) | None => {}
         }
 
         if relay.as_ref().is_some_and(|r| r.address_deadline.is_some_and(|t| t <= now)) {
             if let Some(w) = relay.take().and_then(|r| r.writer) { w.shutdown(); }
-            core.end_viewer("The incoming relay did not provide an address. Ask Windows to connect again.");
+            core.end_viewer(EndReason::Ended, "The incoming relay did not provide an address. Ask Windows to connect again.");
         }
         if now >= next_keepalive {
             next_keepalive = now + Duration::from_secs(60);
@@ -308,7 +308,7 @@ pub fn run(registration: &Registration, master_proof: Option<String>, backend: B
 /// keep hosting.
 fn stdin_closed(core: &mut Core, ipc: bool) -> bool {
     if ipc {
-        core.end_viewer("The LotusViewer window closed.");
+        core.end_viewer(EndReason::Ended, "The LotusViewer window closed.");
     }
     ipc
 }

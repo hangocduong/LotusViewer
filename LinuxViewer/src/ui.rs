@@ -29,6 +29,14 @@ type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 const HELP: &str = "F12 Control · F11 Sound · F9 Monitor · F8 Chat · F7 Clipboard · F6 Zoom · drop files to send · F10 Help";
 const NOTICE_TIME: Duration = Duration::from_secs(8);
 
+fn session_title(partner_id: &str, state: &str, mode: Option<(bool, bool)>) -> String {
+    let mut title = format!("LotusViewer — {partner_id} — {state}");
+    if let Some((view_only, control)) = mode {
+        title += if view_only { " — chỉ xem" } else if control { " — đang điều khiển" } else { " — đang tắt điều khiển" };
+    }
+    title
+}
+
 /// Remote canvas rectangle shown in the window: all monitors or one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct View {
@@ -308,21 +316,21 @@ impl App {
 
     fn update_title(&self) {
         let Some(w) = &self.window else { return };
-        let mut title = format!("LinuxViewer — {} — {}", self.partner_id, self.state);
+        let mut title = session_title(&self.partner_id, &self.state,
+            self.encoder.as_ref().map(|_| (self.view_only, self.control)));
         if self.encoder.is_some() {
-            title += if self.view_only { " — view only" } else if self.control { " — Control ON" } else { " — Control OFF" };
             if self.sound {
-                title += " — Sound ON";
+                title += " — âm thanh";
             }
             title += &match (self.zoom, self.layout) {
-                (Some(z), _) => format!(" — zoom {:.0}%", z * 100.0),
-                (None, Some(l)) => format!(" — fit {:.0}%", l.scale * 100.0),
+                (Some(z), _) => format!(" — phóng {:.0}%", z * 100.0),
+                (None, Some(l)) => format!(" — vừa khung {:.0}%", l.scale * 100.0),
                 (None, None) => String::new(),
             };
             if self.monitors.len() > 1 {
                 title += &match self.monitor {
-                    0 => " — all monitors".to_string(),
-                    n => format!(" — monitor {n}/{}", self.monitors.len()),
+                    0 => " — tất cả màn hình".to_string(),
+                    n => format!(" — màn hình {n}/{}", self.monitors.len()),
                 };
             }
         }
@@ -331,7 +339,7 @@ impl App {
         } else if let Some((n, _)) = &self.notice {
             title += &format!(" — {n}");
         } else if self.encoder.is_some() {
-            title += " — F10 help";
+            title += " — F10 trợ giúp";
         }
         w.set_title(&title);
     }
@@ -562,7 +570,7 @@ impl App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title(format!("LinuxViewer — {}", self.partner_id))
+            .with_title(format!("LotusViewer — {}", self.partner_id))
             .with_inner_size(LogicalSize::new(1600.0, 1000.0));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Rc::new(w),
@@ -613,12 +621,21 @@ impl App {
     fn client_event(&mut self, event_loop: &ActiveEventLoop, event: ClientEvent) {
         match event {
             ClientEvent::Status(s) => {
-                self.state = s;
+                self.state = match s.as_str() {
+                    "Registering this computer…" => "đang đăng ký máy này…",
+                    "Finding the partner computer…" => "đang tìm máy kia…",
+                    "Connecting to the partner computer…" => "đang kết nối…",
+                    "Waiting for the partner to accept the session…" => "đang chờ máy kia nhận phiên…",
+                    "Restoring the relay connection…" => "đang nối lại…",
+                    "Connected directly over the local network." => "đã kết nối qua mạng nội bộ",
+                    "Refreshing the remote screen…" => "đang làm mới màn hình…",
+                    _ => &s,
+                }.into();
                 self.update_title();
             }
             ClientEvent::Connected { width, height } => {
                 let first = self.encoder.is_none();
-                self.state = format!("connected {width}×{height}");
+                self.state = format!("đã kết nối {width}×{height}");
                 let version = self.session.as_ref().map(|s| s.partner_version()).unwrap_or_default();
                 if first {
                     self.encoder = Some(Encoder::new(input::supports_binary_keyboard(&version)));
@@ -920,7 +937,7 @@ fn new_viewer(profile: Profile, partner_id: &str, password: &str, base: ConnectO
         clipboard: None, clipboard_sharing: false, last_clipboard: None, transfers: HashMap::new(),
         download_dir: base.download_dir.clone().unwrap_or(if downloads.is_dir() { downloads } else { home }),
         ipc: base.ipc, clipboard_at_start: base.clipboard, base,
-        partner_id: partner_id.to_string(), state: "connecting…".into(), close_reason: None,
+        partner_id: partner_id.to_string(), state: "đang kết nối…".into(), close_reason: None,
         window: None, surface: None, control: true, view_only: false, encoder: None, origin: (0, 0),
         monitors: Vec::new(), monitor: 0, layout: None, zoom: None, title_after_draw: false, pan_focus: (0.5, 0.5), pointer: None, modifiers: ModifiersState::empty(),
         cursor: CursorState::default(), native_cursors: HashMap::new(), shown_cursor: None,
@@ -1060,6 +1077,17 @@ impl ApplicationHandler<UiEvent> for Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_title_uses_vietnamese_product_and_control_labels() {
+        assert_eq!(session_title("123", "đã kết nối", Some((false, true))),
+                   "LotusViewer — 123 — đã kết nối — đang điều khiển");
+        assert_eq!(session_title("123", "đã kết nối", Some((true, true))),
+                   "LotusViewer — 123 — đã kết nối — chỉ xem");
+        assert_eq!(session_title("123", "đã kết nối", Some((false, false))),
+                   "LotusViewer — 123 — đã kết nối — đang tắt điều khiển");
+        assert_eq!(session_title("123", "đang kết nối…", None), "LotusViewer — 123 — đang kết nối…");
+    }
 
     #[test]
     fn layout_maps_window_to_canvas() {

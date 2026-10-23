@@ -85,7 +85,8 @@ class Phien:
             return ""
         if self.mode == "host":
             return chuoi.PHIEN_DUOC_HO_TRO.format(ten=self.peer_name or chuoi.DUYET_TEN_TRONG)
-        return chuoi.PHIEN_DIEU_KHIEN.format(id=group_id(self.peer_id))
+        template = chuoi.PHIEN_DIEU_KHIEN if self.control else chuoi.PHIEN_CHI_XEM_DIEU_KHIEN
+        return template.format(id=group_id(self.peer_id))
 
 
 def request_text(event: Event) -> str:
